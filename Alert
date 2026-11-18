@@ -1,0 +1,86 @@
+$log = 'C:\Scripts\debug.log'
+$stateFile = 'C:\Scripts\lastrecord.txt'
+
+$smtpServer = '10.3.0.14'
+$mailFrom = 'info@cvpl4.dk'
+$mailTo = 'Advisering@cvpl4.dk'
+
+if (!(Test-Path 'C:\Scripts')) {
+    New-Item -Path 'C:\Scripts' -ItemType Directory -Force | Out-Null
+}
+
+function Log($msg) {
+    Add-Content -Path $log -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $msg"
+}
+
+try {
+    Log "--- Script started ---"
+
+    $last = 0
+
+    if (Test-Path $stateFile) {
+        $last = [long](Get-Content $stateFile -Raw).Trim()
+    }
+
+    $xpath = "*[System[(EventID=4663)] and EventData[Data[@Name='AccessMask']='0x10000']]"
+
+    $events = @(
+        Get-WinEvent -LogName Security -FilterXPath $xpath -MaxEvents 5000 -ErrorAction Stop |
+        Where-Object { $_.RecordId -gt $last } |
+        Sort-Object RecordId
+    )
+
+    Log "Found $($events.Count) matching events"
+
+    foreach ($event in $events) {
+
+        [xml]$xml = $event.ToXml()
+        $data = @{}
+
+        foreach ($item in $xml.Event.EventData.Data) {
+            $data[$item.Name] = [string]$item.'#text'
+        }
+
+        $objectName = $data['ObjectName']
+        $accessMask = $data['AccessMask']
+
+        Log "Checking RecordId $($event.RecordId): Object=$objectName Mask=$accessMask"
+
+        if (
+            $objectName -like '*HQ-Lestlania\STAB\OPS*' -and
+            $accessMask -eq '0x10000'
+        ) {
+
+            $subject = "Fil slettet paa server: $env:COMPUTERNAME"
+
+            $body = @"
+Fil slettet paa server: $env:COMPUTERNAME
+
+ObjectName: $objectName
+AccessMask: $accessMask
+Tidspunkt: $($event.TimeCreated)
+RecordId: $($event.RecordId)
+"@
+
+            Send-MailMessage `
+                -SmtpServer $smtpServer `
+                -From $mailFrom `
+                -To $mailTo `
+                -Subject $subject `
+                -Body $body `
+                -Encoding UTF8 `
+                -ErrorAction Stop
+
+            Log "MAIL SENT for RecordId $($event.RecordId)"
+        }
+
+        Set-Content -Path $stateFile -Value $event.RecordId -ErrorAction Stop
+        $last = $event.RecordId
+    }
+
+    Log "--- Script finished OK ---"
+}
+catch {
+    Log "ERROR: $($_.Exception.Message)"
+    throw
+}

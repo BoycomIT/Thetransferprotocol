@@ -1,0 +1,16 @@
+Import-Module ActiveDirectory
+
+$DCs = Get-ADDomainController -Filter * |
+    Where-Object { -not $_.IsReadOnly }
+
+foreach ($DC in $DCs) {
+    $Account = Get-ADUser -Identity krbtgt `
+        -Server $DC.HostName `
+        -Properties pwdLastSet
+
+    [PSCustomObject]@{
+        DomainController = $DC.HostName
+        PasswordLastSet  = $Account.PasswordLastSet
+        PwdLastSetRaw    = $Account.pwdLastSet
+    }
+} | Format-Table -AutoSize

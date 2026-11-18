@@ -1,0 +1,2 @@
+Get-WinEvent -LogName Security -FilterXPath "*[System[(EventID=4625)]]" -MaxEvents 50 | 
+    Select-Object TimeCreated, @{N='Account';E={$_.Properties[5].Value}}, @{N='Reason';E={$_.Properties[8].Value}}
